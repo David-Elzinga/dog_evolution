@@ -69,7 +69,7 @@ class system:
                         fed_canines.add(chosen_hunter)
                         food -= 1
                         
-                return fed_canines
+                return fed_canines, food
 
             # separate canines into those who prefer human food (tau > 0.5) and wild food (t <= 0.5).
             pref_human = {c for c in canines if c.tau > 0.5}
@@ -77,15 +77,28 @@ class system:
 
             # perform feeding rounds with different food preferences and categories
             fed_canines = set()
+            if len(pref_human) > 0:
+                feed_results =  feed(pref_human, human_food, 'human') 
+                fed_canines |= feed_results[0]
+                human_food = feed_results[1]
+                pref_human = pref_human - fed_canines # take those successful out so they don't attempt a second feeding.
+            
+            if len(pref_wild) > 0:
+                feed_results =  feed(pref_wild, wild_food, 'wild') 
+                fed_canines |= feed_results[0]
+                wild_food = feed_results[1]
+                pref_wild = pref_wild - fed_canines # take those successful out so they don't attempt a second feeding.
+            
+            if len(pref_human) > 0: 
+                feed_results = feed(pref_human, wild_food, 'wild')
+                fed_canines |= feed_results[0]
+                wild_food = feed_results[1]
 
-            if len(pref_human) > 0: fed_canines |= feed(pref_human, human_food, 'human') 
-            pref_human = pref_human - fed_canines # take those successful out so they don't attempt a second feeding.
-            
-            if len(pref_wild) > 0: fed_canines |= feed(pref_wild, wild_food, 'wild')   
-            pref_wild = pref_wild - fed_canines # take those successful out so they don't attempt a second feeding.
-            
-            if len(pref_human) > 0: fed_canines |= feed(pref_human, wild_food, 'wild') 
-            if len(pref_wild) > 0: fed_canines |= feed(pref_wild, human_food, 'human')
+            if len(pref_wild) > 0: 
+                feed_results = feed(pref_wild, human_food, 'human')
+                fed_canines |= feed_results[0]
+                human_food = feed_results[1]
+
             return fed_canines
         
         def reproduce(canines, total_food):
@@ -129,6 +142,7 @@ class system:
                 # the column from the pair_prob_matrix corresponding to that male and re-normalize
                 for dam_idx in range(similarity_matrix.shape[0]):
                     pair_prob = similarity_matrix[dam_idx, :]
+                    pair_prob[pair_prob < self.parms['mate_pickiness']] = 0
                     if sum(pair_prob) > 0: # check to see there's at least one attractive male
                         sire_idx =  np.random.choice(range(len(pair_prob)), p = pair_prob / sum(pair_prob))
                     else:
@@ -162,8 +176,9 @@ class system:
             num_mutants = np.random.binomial(n = litter_sizes, p = 10**self.parms['expn_m'])
 
             # iterate through each breeding pair, generate their pups
+            tau_diffs = []
             for dam, sire, litter_size, sexes, n_mutants in zip(reproducing_females, reproducing_males, litter_sizes, pup_sexes, num_mutants):
-
+                tau_diffs.append(np.abs(dam.tau - sire.tau))
                 # create mutant pups' tau and non mutatn pups' taud
                 pup_taus = np.random.random(size = n_mutants).tolist()
                 min_tau = min([dam.tau, sire.tau])
@@ -176,13 +191,14 @@ class system:
                 new_pups = {canine(0, sexes[k], pup_taus[k]) for k in range(litter_size)}
                 canines |= new_pups
 
-            return canines
+            return canines, tau_diffs
 
 
 
         # generate initial canines - iterate from 30,000ybp to 15,000ybp one year at time, set the 
         # food equal to the carrying capacity, make census to track results
         canines = initialize(self); food = [self.parms['c']]; census = []
+        tau_diffs = []
         for year_bp in range(30000, 15000, -1):
 
             # update the amount of food using a truncated normal centered at last years' food and allocate
@@ -204,8 +220,10 @@ class system:
 
             # simulate hunting and reproduction
             canines = hunt(canines, human_food, wild_food)
-            canines = reproduce(canines, food[-1])
-
+            #canines = reproduce(canines, food[-1])
+            temp = reproduce(canines, food[-1])
+            tau_diffs += temp[1]
+            canines = temp[0]
             # if there are less than (or equal to) 3 canines, stop due to invalid dip test results
             if len(canines) <= 3:
                 break

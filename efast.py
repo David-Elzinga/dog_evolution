@@ -12,7 +12,7 @@ from multiprocessing import Pool
 from SALib.analyze import fast
 from SALib.sample import fast_sampler
 
-default_cores = os.cpu_count() - 1
+default_cores = int(os.cpu_count()/2 - 1)
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--ncores", type = int, default = default_cores,
                     help = "number of cores, defaults to {} on this machine".format(default_cores))
@@ -125,7 +125,7 @@ def generate(ncores = None, pool = None):
     master_df['completed'] = master_df['filename'].isin(completed_files)
     
     # run all the files whose completed value is false. 
-    tbc_df = master_df[~master_df['completed']]
+    tbc_df = np.array_split(master_df[~master_df['completed']], 2)[0]
     tbc_df.drop('completed', axis=1, inplace=True)
     print('running...')
     print(tbc_df.shape)

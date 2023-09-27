@@ -1,69 +1,54 @@
-import simulator
-import numpy as np
-import pickle
 import os
-import pandas as pd
 import glob
-from itertools import product
-from multiprocessing import Pool
+import pickle
 import argparse
 import traceback
+import numpy as np
+import pandas as pd
+import evolution_system
+from multiprocessing import Pool
 
-from collections import Counter
-
-
-import matplotlib.pyplot as plt
-from scipy.stats import gaussian_kde
-import matplotlib as mpl
-import matplotlib.colors as mcolors
-import seaborn as sns
-import matplotlib.patches as mpatches
-
-
-default_cores = os.cpu_count() - 1
+default_cores = 30
 parser = argparse.ArgumentParser()
-parser.add_argument("-n", "--ncores", type=int, default = default_cores,
-                    help="number of cores, defaults to {} on this machine".format(default_cores))
-parser.add_argument("-m", "--mode", type=str, default = 'generate',
-                    help="generate or plot")
+parser.add_argument("-n", "--ncores", type = int, default = default_cores,
+                    help = "number of cores, defaults to {} on this machine".format(default_cores))
+parser.add_argument("-m", "--mode", type = str, 
+                    help = "generate: generates data for validation, or plot: to plot validation figure")
 
-def worker(param_values):
+def worker(parm_values):
 
-    # Define the dictionary of parameters 
-    p = {
-        'c': int(param_values[0]),
-        'mu_tau': [param_values[1]],
-        'sigma_tau': param_values[2],
-        'expn_sigma_f': param_values[3],
-        'expn_m': param_values[4],
-        'expn_sigma_e': param_values[5],
-        'r': param_values[6],
-        'mu_L': param_values[7],
-        'sigma_L': param_values[8],
-        'q': param_values[9],
-        'h_max': param_values[10],
-        'd': param_values[11],
-        'mate_pref': bool(param_values[15]),
-        'food_scheme': param_values[16],  # if constant, half the value
-        'seed': np.random.randint(9999999),
+    # define the parameter values
+    parms = {
+        'c': int(parm_values[0]),
+        'mu_tau': [parm_values[1]],
+        'sigma_tau': parm_values[2],
+        'expn_sigma_f': parm_values[3],
+        'expn_m': parm_values[4],
+        'expn_sigma_e': parm_values[5],
+        'r': parm_values[6],
+        'mu_L': parm_values[7],
+        'sigma_L': parm_values[8],
+        'q': parm_values[9],
+        'h_max': parm_values[10],
+        'd': parm_values[11],
+        'mate_pickiness': parm_values[12],
+        'mate_pref': bool(parm_values[14]), # skip over the dummy parameter
+        'food_scheme': parm_values[15],
+        'low_memory_mode': True
     }
-
-    p['nat_death_prob'] = {
-        'f': p['d']*np.array([0, 0.17, 0.16, 0.5, 0.25, 0.5, 0.17, 0.40, 0.40, 1/p['d']]),
-        'm': p['d']*np.array([0, 0.18, 0.36, 0.19, 0.45, 0.5, 0.5, 0.33, 0.33, 1/p['d']])
+    parms['nat_death_prob'] = {
+        'female': parms['d']*np.array([0, 0.17, 0.16, 0.5, 0.25, 0.5, 0.17, 0.40, 0.40, 1/parms['d']]),
+        'male': parms['d']*np.array([0, 0.18, 0.36, 0.19, 0.45, 0.5, 0.5, 0.33, 0.33, 1/parms['d']])
     }
-
-    census = []
-    num_tries = 0
-    while len(census) < 1500 and num_tries < 50:  
-        #print(num_tries)
-        mono_system = simulator.system(p, param_values[-1])
+    
+    # for 50 attempts, simulate the monotonicity system and pickle the results
+    mono_census = []; num_runs = 0
+    while len(mono_census) < 1500 and num_runs < 50:
+        mono_system = evolution_system.system(parms = parms, name = 'mono_system')
         try:
-            census = simulator.simulate(mono_system)
-
+            mono_census = mono_system.simulate()
         except Exception as e:
-            census = 'Error' 
-
+            mono_census = 'error'
             error_details = {
                 'type': type(e),
                 'args': e.args,
@@ -73,41 +58,41 @@ def worker(param_values):
             with open('error_details.pickle', 'wb') as file:
                 pickle.dump(error_details, file)
             break
+        num_runs += 1
 
-        num_tries += 1; p['seed'] = np.random.randint(9999999)
-
-    with open("data/monotonicity/" + param_values[-1], "wb") as f:
-        pickle.dump({'system': mono_system, 'census': census, 'num_tries': num_tries}, f)
+    with open("data/monotonicity/" + parm_values[-1], "wb") as f:
+        pickle.dump({'system': mono_system, 'census': mono_census, 'num_runs': num_runs}, f)
 
 def generate(ncores = None, pool = None):
-
-    # Check to see if the master df is in the directory. If so, read it in. Otherwise, generate it. 
+    
+    # check to see if the master df (which organizes all simulations) has been created - if 
+    # so, read it in, otherwise, create it
     if os.path.isfile("data/monotonicity/master_df.pickle"):
-        with open("data/monotonicity/master_df.pickle", "rb") as x:
-            df = pickle.load(x)
+        with open("data/monotonicity/master_df.pickle", "rb") as f:
+            master_df = pickle.load(f)
     else:
-        # Define a dictionary with the default values for each parameter 
+        # define the default parameters and their ranges
         default = {
             'c': 500,
             'mu_tau': 0.1,
             'sigma_tau': 0.2,
-            'expn_sigma_f': -1,
+            'expn_sigma_f': 0,
             'expn_m': -2,
-            'expn_sigma_e': -1.85,
+            'expn_sigma_e': -2,
             'r': 4.08,
             'mu_L': 6.8,
             'sigma_L': 2.2,
             'q': 0.5,
             'h_max': 0.3,
             'd': 0.68,
-            'dummy': 0.5,
+            'mate_pickiness': 0.2,
+            'dummy': 0.5
         }
 
         ranges = {
             'c': [400, 600],
-            'mu_tau': [0, 0.5],
             'expn_sigma_f': [-2, 0.5],
-            'expn_m': [-4, -1],
+            'expn_m': [-3, -1],
             'expn_sigma_e': [-3, -1],
             'r': [0.8*4.08, 1.2*4.08],
             'mu_L': [0.8*6.8, 1.2*6.8],
@@ -115,130 +100,113 @@ def generate(ncores = None, pool = None):
             'q': [0.4, 0.6],
             'h_max': [0.01, 0.5],
             'd': [0.8*0.68, 1.2*0.68],
+            'mate_pickiness': [0, 0.4],
             'dummy': [0, 1]
         }
 
-        # Create a set of parameter combinations by incrementing each parameter (one-by-one)
-        # through 5 values in its range
-        param_combinations = []
-        for param, range_ in ranges.items():
-            for val in pd.Series(np.linspace(range_[0], range_[1], 5)):
-                params = default.copy()
-                params[param] = val
-                params['param_changing'] = param
-                param_combinations.append(params)
+        # create an empty df to store the simulations
+        master_df = pd.DataFrame(columns= list(default.keys()) + ['mate_pref', 'food_scheme', 'rep', 'adj_parm', 'adj_step'])
 
-        # Create a DataFrame from the list of parameter combinations
-        df = pd.DataFrame(param_combinations)
-        df['param_set_id'] = df.index 
+        # iterate over each parameter and generate the simulations
+        for parm_name in ranges.keys():
+            parm_range = ranges[parm_name]
+            parm_vals = np.linspace(parm_range[0], parm_range[1], 5)
+            for n, value in enumerate(parm_vals):
+                for mate_pref in [True, False]:
+                    for food_scheme in ['constant', 'increasing']:
+                        for rep in range(50): # 50 reps per simulation
+                            # copy the default dict and adjust the one parm value that is changing
+                            parm_variation = default.copy()
+                            parm_variation[parm_name] = value
+                            parm_variation["mate_pref"] = mate_pref
+                            parm_variation["food_scheme"] = food_scheme
+                            parm_variation["rep"] = rep
+                            parm_variation['adj_parm'] = parm_name
+                            parm_variation['adj_step'] = n
+                            master_df.loc[len(master_df)] = parm_variation
 
-        # Now we need to replicate this list of parameter combinations for each combination 
-        # of mate preference/food_scheme and across 50 repetitions. 
-        mate_pref = [True, False]
-        food_scheme = ['constant', 'increasing']
-        rep = range(50)
-        df_crossed = pd.DataFrame(list(product(mate_pref, food_scheme, rep)), 
-                                columns=['mate_pref', 'food_scheme', 'rep'])
+        # reset index and create file names
+        master_df.reset_index(drop=True, inplace=True)
+        master_df['filename'] = 'mono-' + master_df['adj_parm'].astype(str).values + master_df['adj_step'].astype(str).values + '_matepref-' + master_df['mate_pref'].astype(str).values + '_foodscheme-' + master_df['food_scheme'] + '_rep-' + master_df['rep'].astype(str).values + '.pickle'
+        with open("data/monotonicity/master_df.pickle", "wb") as f:
+            pickle.dump(master_df, f)
 
-        # Merge our two df's on a dummy key (then drop it.)
-        df['key'] = 1
-        df_crossed['key'] = 1
-        df = pd.merge(df, df_crossed, on='key')
-        df.drop('key', axis=1, inplace=True)
-
-        # Construct file names in the following format, then dump it.
-        df['filename'] = 'monotonicity-' + df['param_set_id'].astype(str).values + '_matepref-' + df['mate_pref'].astype(str).values + '_foodscheme-' + df['food_scheme'] + '_rep-' + df['rep'].astype(str).values + '.pickle'
-        with open("data/monotonicity/master_df.pickle", "wb") as x:
-            pickle.dump(df, x)
-
-    # Identify the completed files
-    completed_files = glob.glob('data/monotonicity/*')
-    df['completed'] = df['filename'].isin(completed_files)
+    # identify the completed files
+    completed_files = [f.split('\\')[-1] for f in glob.glob('data/monotonicity/*')]
+    master_df['completed'] = master_df['filename'].isin(completed_files)
     
     # Run all the files whose completed value is false. 
-    tbc_df = df[~df['completed']]
+    tbc_df = master_df[~master_df['completed']]
     tbc_df.drop('completed', axis=1, inplace=True)
     print('running...')
-    #worker(tbc_df.iloc[2997].values)
+    print(tbc_df.shape)
     pool.map(worker, tbc_df.values)
 
-    return
 
 def parse():
 
-    # Read in the master df 
+    # read in the master df 
     with open("data/monotonicity/master_df.pickle", "rb") as x:
         df = pickle.load(x)
 
-    df['num_tries'] = np.nan
+    df['num_runs'] = np.nan
     df['max_streak'] = np.nan
     df['speciation_ybp'] = np.nan
 
-    # Identify each of the complete files
+    # identify each of the complete files
     completed_files = glob.glob('data/monotonicity/mono*')
 
-    # Open each file, parse the results, put them in the master df
+    # open each file, parse the results, put them in the master df
     for n, f in enumerate(completed_files):
         print('Working on file ' + str(n) + ' out of ' + str(len(completed_files)))
-        #import pdb; pdb.set_trace() # df.loc[df['filename'] == filename][['num_tries', 'max_streak', 'speciation_ybp']]
         with open(f, "rb") as x:
             results = pickle.load(x)
 
         filename = f.split(os.sep)[-1]
 
-        # Record the number of tries
-        df.loc[df['filename'] == filename, 'num_tries'] = results['num_tries']
+        # record the number of tries
+        df.loc[df['filename'] == filename, 'num_runs'] = results['num_runs']
 
-        # Check for an error, record if there was/wasn't an error
-        if results['census'] == 'Error':
+        # check for an error, record if there was/wasn't an error
+        if results['census'] == 'error':
             df.loc[df['filename'] == filename, 'error'] = True
 
         else:
             df.loc[df['filename'] == filename, 'error'] = False
             
-            # Collect the p-values as being significant/not significant
-            p_vals = [1*(x['dip_p'] < 0.1) for x in results['census']]
+            # collect the p-values as being significant/not significant
+            p_vals = [1*(x['dip_p'] < 0.01) for x in results['census']]
 
-            # Check if the number of p-values is at least 1500
-            if len(p_vals) == 1500: # the last try was successful
-                
-                # Identify the longest streak of speciation
-                max_len = 0; cur_len = 0
-                for num in p_vals:
-                    if num == 1:
-                        cur_len += 1
-                    else:
-                        max_len = max(max_len, cur_len)
-                        cur_len = 0
-                df.loc[df['filename'] == filename, 'max_streak'] = max(max_len, cur_len)
+            # check if the number of p-values is at least 1500
+            max_len = 0; cur_len = 0
+            for num in p_vals:
+                if num == 1:
+                    cur_len += 1
+                else:
+                    max_len = max(max_len, cur_len)
+                    cur_len = 0
+            df.loc[df['filename'] == filename, 'max_streak'] = max(max_len, cur_len)
 
-                # Now we look for the first occurance of speciation (at least 15 consecutive decades
-                # where the p-value is < 0.05) Convolve over the p_vals with an array of 15 ones,
-                # look for the sum to be 15 (this indicates consecutive decades of speciation)
-                convolution = np.convolve(p_vals, np.ones(15), mode='valid') == 15
-                if convolution.any(): # check if there's a place where we achieve the 15
-                    index_of_spec = np.argmax(convolution)
-                else: # otherwise return -1 as an indicator there's no speciation
-                    index_of_spec = -1
+            # now we look for the first occurance of speciation (at least 150 consecutive decades
+            # where the p-value is < 0.01) Convolve over the p_vals with an array of 150 ones,
+            # look for the sum to be 150 (this indicates consecutive decades of speciation)
+            convolution = np.convolve(p_vals, np.ones(150), mode='valid') == 150
+            if convolution.any(): # check if there's a place where we achieve the 150
+                index_of_spec = np.argmax(convolution)
+            else: # otherwise return -1 as an indicator there's no speciation
+                index_of_spec = -1
 
-                # If there is no speciation event - record speciation generation at nan
-                if index_of_spec == -1:
-                    df.loc[df['filename'] == filename, 'speciation_ybp'] = np.nan
-                else: # If there is - check if the index is zero (meaning speciation started immediately)
-                    if index_of_spec == 0:
-                        df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000
-                    else: # assuming the speciation exists - look into the "starts" list to record where it begins
-                        df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000 - 10*(index_of_spec + 1)
+            # if there is no speciation event - record speciation generation at nan
+            if index_of_spec == -1:
+                df.loc[df['filename'] == filename, 'speciation_ybp'] = np.nan
+            else: # If there is - check if the index is zero (meaning speciation started immediately)
+                if index_of_spec == 0:
+                    df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000
+                else: # assuming the speciation exists - look into the "starts" list to record where it begins
+                    df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000 - 10*(index_of_spec + 1)
 
         with open("data/monotonicity/master_df_parsed.pickle", "wb") as x:
             pickle.dump(df, x)
-
-def plot():
-
-    return
-
-
-
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -250,75 +218,3 @@ if __name__ == "__main__":
         parse()
     elif args.mode == 'plot':
         plot()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Give random seeds
-
-
-# # Compete 10 repetitions of each system
-# validation_systems = []
-# censuses = []
-# for mate_pref in [True, False]:
-#     for food_scheme in ['increasing', 'constant']:
-#         for s in range(10):
-#             if os.path.isfile("data/validation/validation_matepref-" + str(mate_pref) + "_foodscheme-" + food_scheme + "_rep-" + str(s) + ".pickle"):
-#                 with open("data/validation/validation_matepref-" + str(mate_pref) + "_foodscheme-" + food_scheme + "_rep-" + str(s) + ".pickle", "rb") as f:
-#                     x = pickle.load(f)
-#                 validation_systems.append(x['system'])
-#                 censuses.append(x['census'])
-
-#             else:
-#                 p['seed'] = s; p['mate_pref'] = mate_pref; p['food_scheme'] = food_scheme
-#                 validation_system = simulator.system(p, 'validation system')
-#                 census = simulator.simulate(validation_system)
-#                 censuses.append(census)
-#                 with open("data/validation/validation_matepref-" + str(mate_pref) + "_foodscheme-" + food_scheme + "_rep-" + str(s) + ".pickle", "wb") as f:
-#                     pickle.dump({'system':validation_system, 'census':census}, f)
-
-# # For each of the validation systems, collect ages over the past 10 decades 
-# ages_by_system = []
-# for s in range(10):
-#     ages = []
-#     for decade in range(-1, -11, -1):
-#         ages += censuses[s][decade]['ages']
-
-#     counts = Counter(ages)
-#     total = len(ages)
-#     age_props = {}
-
-#     for i in range(0, 10):
-#         age_props[i] = counts[i] / total  
-
-#     ages_by_system.append(age_props)
-
-
-# data = {}  
-# for i in range(10):
-#     data[i] = [d[i] for d in ages_by_system]  
-
-# fig, ax = plt.subplots()  
-# ax.violinplot(data.values(), positions=range(10))
-# ax.scatter([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0.34, 0.21, 0.15, 0.11, 0.05, 0.05, 0.04, 0.02, 0.02, 0.01], color='red', marker='d')
-
-# # ax.set_xticklabels(data.keys()) 
-# # ax.set_xlabel("Integer Keys")
-# # ax.set_ylabel("Values")
-# # ax.set_title("Box and Whisker Plot for Integer Keys")
-
-# plt.show()  

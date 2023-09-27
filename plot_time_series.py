@@ -1,5 +1,7 @@
-import simulator
+import evolution_system
 import numpy as np
+import pickle
+import os
 
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
@@ -7,32 +9,11 @@ import matplotlib
 import matplotlib.colors as mcolors
 import seaborn as sns
 
-p = {
-    'seed': 0,
-    'c': 500,
-    'mu_tau': [0.1],
-    'sigma_tau': 0.05,
-    'expn_sigma_f': 0.5,
-    'expn_m': -2,
-    'expn_sigma_e': -1,
-    'r': 4.08,
-    'mu_L': 6.8,
-    'sigma_L': 2.2,
-    'q': 0.5,
-    'food_scheme': 'increasing',  # if constant, half the value
-    'mate_pref': False,
-    'h_max': 1,
-    'd': 0.68,
-    'plot': True
-}
-
-p['nat_death_prob'] = {
-    'f': p['d']*np.array([0, 0.17, 0.16, 0.5, 0.25, 0.5, 0.17, 0.40, 0.40, 1/p['d']]),
-    'm': p['d']*np.array([0, 0.18, 0.36, 0.19, 0.45, 0.5, 0.5, 0.33, 0.33, 1/p['d']])
-}
-
-test_system = simulator.system(p, 'test_system')
-census = simulator.simulate(test_system)
+### Simualations
+with open("data/single_run.pickle", "rb") as f:
+    x = pickle.load(f)
+    verification_system_1 = x['system']
+    census = x['census']
 
 fig, ax = plt.subplots()
 
@@ -52,7 +33,7 @@ for data in census:
     y_vals_norm = (y_vals - np.min(y_vals)) / (np.max(y_vals) - np.min(y_vals))
     if year % 10 == 0: 
         sc = ax.scatter([year] * len(x_vals), x_vals, c=y_vals_norm, cmap=newcmap, linewidth=2)
-        if data["dip_p"] < 0.05: 
+        if data["dip_p"] < 0.01: 
             if legend_flag:
                 ax.scatter([year], [0], c='red', s=50, zorder = 999, label=r'Dip Test $p < 0.05$')
                 legend_flag = False
@@ -70,7 +51,7 @@ ax2 = ax.twinx()
 ax2.plot([data["YBP"] for data in census], [data["human_food"] for data in census], label = 'Human Food', color='orange', linestyle='dashed')
 ax2.plot([data["YBP"] for data in census], [data["wild_food"] for data in census], label = 'Wild Food', color='purple', linestyle='dashed')
 #ax2.legend(fontsize=10)
-ax2.set_ylim(0, p['c'])
+ax2.set_ylim(0, x['system'].parms['c'])
 
 handles1, labels1 = ax.get_legend_handles_labels()
 handles2, labels2 = ax2.get_legend_handles_labels()
