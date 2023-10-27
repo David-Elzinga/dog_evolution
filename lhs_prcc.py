@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import evolution_system
 from multiprocessing import Pool
+from scipy.stats import qmc
+
 
 from SALib.analyze import fast
 from SALib.sample import fast_sampler
@@ -45,14 +47,14 @@ def worker(parm_values):
         'male': parms['d']*np.array([0, 0.18, 0.36, 0.19, 0.45, 0.5, 0.5, 0.33, 0.33, 1/parms['d']])
     }
 
-    # for 50 attempts, simulate the efast system and pickle the results
-    efast_census = []; num_runs = 0
-    while len(efast_census) < 1500 and num_runs < 50:
-        efast_system = evolution_system.system(parms = parms, name = 'efast_system')
+    # for 50 attempts, simulate the prcc system and pickle the results
+    prcc_census = []; num_runs = 0
+    while len(prcc_census) < 1500 and num_runs < 50:
+        prcc_system = evolution_system.system(parms = parms, name = 'prcc_system')
         try:
-            efast_census = efast_system.simulate()
+            prcc_census = prcc_system.simulate()
         except Exception as e:
-            efast_census = 'error'
+            prcc_census = 'error'
             error_details = {
                 'type': type(e),
                 'args': e.args,
@@ -64,17 +66,21 @@ def worker(parm_values):
             break
         num_runs += 1
 
-    with open("data/efast/" + parm_values[-1], "wb") as f:
-        pickle.dump({'system': efast_system, 'census': efast_census, 'num_runs': num_runs}, f)
+    with open("data/prcc/" + parm_values[-1], "wb") as f:
+        pickle.dump({'system': prcc_system, 'census': prcc_census, 'num_runs': num_runs}, f)
 
 def generate(ncores = None, pool = None):
     
     # check to see if the master df (which organizes all simulations) has been created - if 
     # so, read it in, otherwise, create it
-    if os.path.isfile("data/efast/master_df.pickle"):
-        with open("data/efast/master_df.pickle", "rb") as f:
+    if os.path.isfile("data/prcc/master_df.pickle"):
+        with open("data/prcc/master_df.pickle", "rb") as f:
             master_df = pickle.load(f)
     else:
+        # Make our LHS
+        n=500
+        LHS = qmc.LatinHypercube(d=12)
+        parm_list = LHS.random(n)
         problem = {
             'num_vars': 12,
             'names': ['c', 'expn_sigma_f', 'expn_m', 'expn_sigma_e', 'r', 'mu_L',
@@ -95,7 +101,9 @@ def generate(ncores = None, pool = None):
             ]
         }
 
-        efast_params = fast_sampler.sample(problem, N = 65*12, seed = 0)
+        l_bounds = [x[0] for x in problem['bounds']]
+        u_bounds = [x[1] for x in problem['bounds']]
+        prcc_params = qmc.scale(parm_list, l_bounds, u_bounds)
 
         # generate all combinations of food_scheme, and rep
         food_rep_combinations = list(itertools.product(['constant', 'increasing'], range(20)))
@@ -104,7 +112,7 @@ def generate(ncores = None, pool = None):
         parameter_sets = []
 
         # Iterate over each parameter and generate the simulations
-        for n, values in enumerate(efast_params):
+        for n, values in enumerate(prcc_params):
             for food_scheme, rep in food_rep_combinations:
                 parm_variation = dict(zip(problem['names'], values))
                 parm_variation["food_scheme"] = food_scheme
@@ -117,12 +125,12 @@ def generate(ncores = None, pool = None):
 
         # reset index and create file names
         master_df.reset_index(drop=True, inplace=True)
-        master_df['filename'] = 'efast-' + master_df['param_set'].astype(str).values + '_foodscheme-' + master_df['food_scheme'] + '_rep-' + master_df['rep'].astype(str).values + '.pickle'
-        with open("data/efast/master_df.pickle", "wb") as f:
+        master_df['filename'] = 'prcc-' + master_df['param_set'].astype(str).values + '_foodscheme-' + master_df['food_scheme'] + '_rep-' + master_df['rep'].astype(str).values + '.pickle'
+        with open("data/prcc/master_df.pickle", "wb") as f:
             pickle.dump(master_df, f)
 
     # identify the completed files
-    completed_files = [f.split('\\')[-1] for f in glob.glob('data/efast/*')]
+    completed_files = [f.split('\\')[-1] for f in glob.glob('data/prcc/*')]
     master_df['completed'] = master_df['filename'].isin(completed_files)
     
     # run all the files whose completed value is false. 
@@ -138,7 +146,7 @@ def generate(ncores = None, pool = None):
 def parse():
 
     # read in the master df 
-    with open("data/efast/master_df.pickle", "rb") as x:
+    with open("data/prcc/master_df.pickle", "rb") as x:
         df = pickle.load(x)
 
     df['num_runs'] = np.nan
@@ -146,7 +154,7 @@ def parse():
     df['speciation_ybp'] = np.nan
 
     # identify each of the complete files
-    completed_files = glob.glob('data/efast/efast*')
+    completed_files = glob.glob('data/prcc/prcc*')
 
     # open each file, parse the results, put them in the master df
     for n, f in enumerate(completed_files):
@@ -197,7 +205,7 @@ def parse():
                 else: # assuming the speciation exists - look into the "starts" list to record where it begins
                     df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000 - 10*(index_of_spec + 1)
 
-        with open("data/efast/master_df_parsed_150.pickle", "wb") as x:
+        with open("data/prcc/master_df_parsed_150.pickle", "wb") as x:
             pickle.dump(df, x)
 
 if __name__ == "__main__":

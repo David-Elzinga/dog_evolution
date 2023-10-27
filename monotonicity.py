@@ -190,7 +190,7 @@ def parse():
             # now we look for the first occurance of speciation (at least 150 consecutive decades
             # where the p-value is < 0.01) Convolve over the p_vals with an array of 150 ones,
             # look for the sum to be 150 (this indicates consecutive decades of speciation)
-            convolution = np.convolve(p_vals, np.ones(150), mode='valid') == 150
+            convolution = np.convolve(p_vals, np.ones(15), mode='valid') == 15
             if convolution.any(): # check if there's a place where we achieve the 150
                 index_of_spec = np.argmax(convolution)
             else: # otherwise return -1 as an indicator there's no speciation
