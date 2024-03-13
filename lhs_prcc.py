@@ -190,7 +190,7 @@ def parse():
             # now we look for the first occurance of speciation (at least 15 consecutive decades
             # where the p-value is < 0.05) Convolve over the p_vals with an array of 15 ones,
             # look for the sum to be 15 (this indicates consecutive decades of speciation)
-            convolution = np.convolve(p_vals, np.ones(150), mode='valid') == 150
+            convolution = np.convolve(p_vals, np.ones(15), mode='valid') == 15
             if convolution.any(): # check if there's a place where we achieve the 15
                 index_of_spec = np.argmax(convolution)
             else: # otherwise return -1 as an indicator there's no speciation
@@ -205,7 +205,7 @@ def parse():
                 else: # assuming the speciation exists - look into the "starts" list to record where it begins
                     df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000 - 10*(index_of_spec + 1)
 
-        with open("data/prcc/master_df_parsed_150.pickle", "wb") as x:
+        with open("data/prcc/master_df_parsed_15.pickle", "wb") as x:
             pickle.dump(df, x)
 
 if __name__ == "__main__":

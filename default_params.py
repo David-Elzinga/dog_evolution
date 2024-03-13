@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import evolution_system
 from multiprocessing import Pool
+from scipy.stats import qmc
+
 
 from SALib.analyze import fast
 from SALib.sample import fast_sampler
@@ -23,21 +25,21 @@ def worker(parm_values):
 
     # define the parameter values
     parms = {
-        'c': int(parm_values[0]),
+        'c': 500,
         'mu_tau': [0.1],
         'sigma_tau': 0.2,
-        'expn_sigma_f': parm_values[1],
-        'expn_m': parm_values[2],
-        'expn_sigma_e': parm_values[3],
-        'r': parm_values[4],
-        'mu_L': parm_values[5],
-        'sigma_L': parm_values[6],
-        'q': parm_values[7],
-        'h_max': parm_values[8],
-        'd': parm_values[9],
-        'mate_pickiness': parm_values[10],
-        'mate_pref': True, # skip over the dummy parameter
-        'food_scheme': parm_values[12],
+        'expn_sigma_f': 0.3,
+        'expn_m': -2,
+        'expn_sigma_e': -2,
+        'r': 4.08,
+        'mu_L': 6.8,
+        'sigma_L': 2.2,
+        'q': 0.5,
+        'h_max': 0.3,
+        'd': 0.68,
+        'mate_pickiness': 0.2,
+        'mate_pref': parm_values[0],
+        'food_scheme': parm_values[1],
         'low_memory_mode': True
     }
     parms['nat_death_prob'] = {
@@ -45,14 +47,14 @@ def worker(parm_values):
         'male': parms['d']*np.array([0, 0.18, 0.36, 0.19, 0.45, 0.5, 0.5, 0.33, 0.33, 1/parms['d']])
     }
 
-    # for 50 attempts, simulate the efast system and pickle the results
-    efast_census = []; num_runs = 0
-    while len(efast_census) < 1500 and num_runs < 50:
-        efast_system = evolution_system.system(parms = parms, name = 'efast_system')
+    # for 50 attempts, simulate the default system and pickle the results
+    default_census = []; num_runs = 0
+    while len(default_census) < 1500 and num_runs < 50:
+        default_system = evolution_system.system(parms = parms, name = 'default_system')
         try:
-            efast_census = efast_system.simulate()
+            default_census = default_system.simulate()
         except Exception as e:
-            efast_census = 'error'
+            default_census = 'error'
             error_details = {
                 'type': type(e),
                 'args': e.args,
@@ -64,71 +66,47 @@ def worker(parm_values):
             break
         num_runs += 1
 
-    with open("data/efast/" + parm_values[-1], "wb") as f:
-        pickle.dump({'system': efast_system, 'census': efast_census, 'num_runs': num_runs}, f)
+    with open("data/default/" + parm_values[-1], "wb") as f:
+        pickle.dump({'system': default_system, 'census': default_census, 'num_runs': num_runs}, f)
 
 def generate(ncores = None, pool = None):
     
     # check to see if the master df (which organizes all simulations) has been created - if 
     # so, read it in, otherwise, create it
-    if os.path.isfile("data/efast/master_df.pickle"):
-        with open("data/efast/master_df.pickle", "rb") as f:
+    if os.path.isfile("data/default/master_df.pickle"):
+        with open("data/default/master_df.pickle", "rb") as f:
             master_df = pickle.load(f)
     else:
-        problem = {
-            'num_vars': 12,
-            'names': ['c', 'expn_sigma_f', 'expn_m', 'expn_sigma_e', 'r', 'mu_L',
-                       'sigma_L', 'q', 'h_max', 'd', 'mate_pickiness', 'dummy'],
-            'bounds': [
-                [400, 600],             # Range for 'c'
-                [-2, 0.5],              # Range for 'expn_sigma_f'
-                [-3, -1],               # Range for 'expn_m'
-                [-3, -1],               # Range for 'expn_sigma_e'
-                [0.8*4.08, 1.2*4.08],   # Range for 'r'
-                [0.8*6.8, 1.2*6.8],     # Range for 'mu_L'
-                [0.8*2.2, 1.2*2.2],     # Range for 'sigma_L'
-                [0.4, 0.6],             # Range for 'q'
-                [0.01, 0.5],            # Range for 'h_max'
-                [0.8*0.68, 1.2*0.68],   # Range for 'd'
-                [0, 0.4],               # Range for mate pickiness
-                [0, 1]                  # Range for 'dummy'
-            ]
-        }
+        # make our repetitions
+        food_rep_combinations = list(itertools.product(['constant', 'increasing'], range(1000)))
 
-        efast_params = fast_sampler.sample(problem, N = 65*12, seed = 0)
+        # create a list to hold all the reps
+        rep_sets = []
 
-        # generate all combinations of food_scheme, and rep
-        food_rep_combinations = list(itertools.product(['constant', 'increasing'], range(20)))
-
-        # create a list to hold all the parameter sets
-        parameter_sets = []
-
-        # Iterate over each parameter and generate the simulations
-        for n, values in enumerate(efast_params):
+        # iterate over each parameter and generate the simulations
+        for mate_pref in [True, False]:
             for food_scheme, rep in food_rep_combinations:
-                parm_variation = dict(zip(problem['names'], values))
-                parm_variation["food_scheme"] = food_scheme
-                parm_variation["rep"] = rep
-                parm_variation['param_set'] = n
-                parameter_sets.append(parm_variation)
+                rep_variation = dict()
+                rep_variation["mate_pref"] = mate_pref
+                rep_variation["food_scheme"] = food_scheme
+                rep_variation["rep"] = rep
+                rep_sets.append(rep_variation)
 
         # create a DataFrame from the list of parameter sets
-        master_df = pd.DataFrame(parameter_sets)
+        master_df = pd.DataFrame(rep_sets)
 
         # reset index and create file names
         master_df.reset_index(drop=True, inplace=True)
-        master_df['filename'] = 'efast-' + master_df['param_set'].astype(str).values + '_foodscheme-' + master_df['food_scheme'] + '_rep-' + master_df['rep'].astype(str).values + '.pickle'
-        with open("data/efast/master_df.pickle", "wb") as f:
+        master_df['filename'] = 'default' + '_matepref-' + master_df['mate_pref'].astype(str).values + '_foodscheme-' + master_df['food_scheme'] + '_rep-' + master_df['rep'].astype(str).values + '.pickle'
+        with open("data/default/master_df.pickle", "wb") as f:
             pickle.dump(master_df, f)
 
     # identify the completed files
-    completed_files = [f.split('\\')[-1] for f in glob.glob('data/efast/*')]
+    completed_files = [f.split('\\')[-1] for f in glob.glob('data/default/*')]
     master_df['completed'] = master_df['filename'].isin(completed_files)
     
-    # run all the files whose completed value is false. #0 on euler, 1 on local 
-    #tbc_df = np.array_split(master_df[~master_df['completed']], 2)[1] # update based on what computer you're working on
+    # run all the files whose completed value is false. 
     tbc_df = master_df[~master_df['completed']]
-    
     tbc_df.drop('completed', axis=1, inplace=True)
     print('running...')
     print(tbc_df.shape)
@@ -138,7 +116,7 @@ def generate(ncores = None, pool = None):
 def parse():
 
     # read in the master df 
-    with open("data/efast/master_df.pickle", "rb") as x:
+    with open("data/default/master_df.pickle", "rb") as x:
         df = pickle.load(x)
 
     df['num_runs'] = np.nan
@@ -146,7 +124,7 @@ def parse():
     df['speciation_ybp'] = np.nan
 
     # identify each of the complete files
-    completed_files = glob.glob('data/efast/efast*')
+    completed_files = glob.glob('data/default/default*')
 
     # open each file, parse the results, put them in the master df
     for n, f in enumerate(completed_files):
@@ -182,7 +160,7 @@ def parse():
             # now we look for the first occurance of speciation (at least 15 consecutive decades
             # where the p-value is < 0.05) Convolve over the p_vals with an array of 15 ones,
             # look for the sum to be 15 (this indicates consecutive decades of speciation)
-            convolution = np.convolve(p_vals, np.ones(15), mode='valid') == 15
+            convolution = np.convolve(p_vals, np.ones(150), mode='valid') == 150
             if convolution.any(): # check if there's a place where we achieve the 15
                 index_of_spec = np.argmax(convolution)
             else: # otherwise return -1 as an indicator there's no speciation
@@ -197,7 +175,7 @@ def parse():
                 else: # assuming the speciation exists - look into the "starts" list to record where it begins
                     df.loc[df['filename'] == filename, 'speciation_ybp'] = 30000 - 10*(index_of_spec + 1)
 
-        with open("data/efast/master_df_parsed_15.pickle", "wb") as x:
+        with open("data/default/master_df_parsed_150.pickle", "wb") as x:
             pickle.dump(df, x)
 
 if __name__ == "__main__":
